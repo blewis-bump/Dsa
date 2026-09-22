@@ -1,5 +1,7 @@
 import random
 
+from data_structures import Stack, Queue
+
 
 def _random_list(n):
     return [random.randint(0, n) for _ in range(n)]
@@ -69,6 +71,56 @@ def selection_sort(n):
     return data
 
 
+def stack_push_pop(n):
+    """Push n items then pop them all back off. Both ops are O(1), so this
+    is expected to scale as O(n) overall."""
+    s = Stack()
+    for i in range(n):
+        s.push(i)
+    while not s.is_empty():
+        s.pop()
+    return True
+
+
+def queue_enqueue_dequeue(n):
+    """Enqueue n items then dequeue them all. enqueue is O(1) but this
+    Queue's dequeue is O(n) (list.pop(0) shifts every remaining element),
+    so this is expected to scale as O(n^2) overall."""
+    q = Queue()
+    for i in range(n):
+        q.enqueue(i)
+    while not q.is_empty():
+        q.dequeue()
+    return True
+
+
+def stack_based_reversal(n):
+    """Reverse a list of n items using a Stack. Push is O(1) * n, pop is
+    O(1) * n, so this is expected to scale as O(n)."""
+    data = _random_list(n)
+    s = Stack()
+    for value in data:
+        s.push(value)
+    reversed_data = []
+    while not s.is_empty():
+        reversed_data.append(s.pop())
+    return reversed_data
+
+
+def queue_based_rotation(n):
+    """Rotate a list of n items by repeatedly dequeuing from the front and
+    enqueuing back to the end. dequeue is O(n) here, so this is expected to
+    scale as O(n^2)."""
+    data = _random_list(n)
+    q = Queue()
+    for value in data:
+        q.enqueue(value)
+    for _ in range(len(data)):
+        front = q.dequeue()
+        q.enqueue(front)
+    return True
+
+
 ALGORITHMS = {
     "linear_search": linear_search,
     "binary_search": binary_search,
@@ -76,5 +128,9 @@ ALGORITHMS = {
     "nested_loops": nested_loops,
     "insertion_sort": insertion_sort,
     "selection_sort": selection_sort,
+    "stack_push_pop": stack_push_pop,
+    "queue_enqueue_dequeue": queue_enqueue_dequeue,
+    "stack_based_reversal": stack_based_reversal,
+    "queue_based_rotation": queue_based_rotation,
 }
 
