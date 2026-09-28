@@ -14,6 +14,7 @@ the raw timing data and a base64-encoded snapshot of the chart.
   - [`GET /analyze`](#get-analyze)
   - [`GET /algorithms`](#get-algorithms)
 - [Supported algorithms](#supported-algorithms)
+- [Stack and Queue](#stack-and-queue)
 - [Snapshots](#snapshots)
 - [Adding a new algorithm](#adding-a-new-algorithm)
 - [Known limitations](#known-limitations)
@@ -43,6 +44,8 @@ parameters.
 | [`server.py`](server.py) | Flask app; defines `/analyze` and `/algorithms`, validates query params, saves snapshots, builds the JSON response. |
 | [`algorithms.py`](algorithms.py) | The algorithm implementations available to the visualizer, keyed in the `ALGORITHMS` dict. |
 | [`Algorithm.py`](Algorithm.py) | `time_complexity_visualizer(...)` — runs an algorithm across a range of input sizes and returns a matplotlib figure plus the timing data. |
+| [`data_structures.py`](data_structures.py) | `Stack` and `Queue` classes used by the stack/queue entries in `ALGORITHMS`. |
+| [`test_data_structures.py`](test_data_structures.py) | `unittest` suite covering `Stack` and `Queue`. |
 | `snapshots/` | Created automatically on first run; holds one timestamped PNG per `/analyze` request. |
 
 ## Requirements
@@ -159,6 +162,44 @@ algorithm's worst-case complexity rather than a lucky best case.
 | `nested_loops` | Two nested `range(n)` loops with a counter increment — a baseline O(n²) reference with no data-dependent branching. | O(n²) |
 | `insertion_sort` | Insertion sort on a random list of `n` integers. | O(n²) |
 | `selection_sort` | Selection sort on a random list of `n` integers. | O(n²) |
+| `stack_push_pop` | Pushes `n` items onto a [`Stack`](data_structures.py) then pops them all off. | O(n) |
+| `queue_enqueue_dequeue` | Enqueues `n` items onto a [`Queue`](data_structures.py) then dequeues them all. This `Queue.dequeue()` is `list.pop(0)`, which shifts every remaining element, so the operation itself is O(n). | O(n²) |
+| `stack_based_reversal` | Reverses a random list of `n` integers by pushing all of them onto a `Stack` and popping them back off. | O(n) |
+| `queue_based_rotation` | Rotates a random list of `n` integers by repeatedly dequeuing the front of a `Queue` and enqueuing it back to the end. | O(n²) |
+
+`stack_push_pop`/`stack_based_reversal` and `queue_enqueue_dequeue`/`queue_based_rotation`
+are intentionally paired so the visualizer plots stack ops (O(n), all O(1)
+operations) next to queue ops (O(n²), because this `Queue`'s `dequeue()` is
+O(n)) and shows the two curves diverge as `n` grows.
+
+## Stack and Queue
+
+[`data_structures.py`](data_structures.py) provides `Stack` (LIFO) and
+`Queue` (FIFO) classes, both backed by a Python list:
+
+- `Stack`: `push`, `pop`, `peek`, `is_empty`, `len()`. `pop`/`peek` on an
+  empty stack raise `IndexError`.
+- `Queue`: `enqueue`, `dequeue`, `front`, `is_empty`, `len()`. `dequeue` is
+  `list.pop(0)`, so it's O(n) rather than O(1) — see the note on
+  `queue_enqueue_dequeue` below. `dequeue`/`front` on an empty queue raise
+  `IndexError`.
+
+Run the test suite (20 `unittest` cases covering push/pop/enqueue/dequeue,
+LIFO/FIFO ordering, empty-structure errors, and falsy/`None` values):
+
+```powershell
+python -m unittest test_data_structures.py -v
+```
+
+Four algorithms built on `Stack`/`Queue` are registered in `ALGORITHMS` (see
+[Supported algorithms](#supported-algorithms)) so they can be timed and
+plotted through `/analyze` exactly like the sorting/searching algorithms,
+e.g.:
+
+```
+GET http://localhost:8000/analyze?algo=stack_push_pop&step=100&n_max=1000
+GET http://localhost:8000/analyze?algo=queue_enqueue_dequeue&step=100&n_max=1000
+```
 
 ## Snapshots
 
