@@ -1,134 +1,72 @@
-import base64
-import io
-import os
-from datetime import datetime
+"""Flask API for the Time Complexity Visualizer.
 
-import matplotlib.pyplot as plt
+Endpoints:
+    GET  /algorithms  - list the algorithm names you can analyze (public)
+    GET  /analyze     - time an algorithm and return the chart (public)
+    POST /login       - exchange username + password for a JWT
+    POST /analyze     - same as GET, but also saves the result (requires a JWT)
+
+Run it with:  python server.py
+"""
 from flask import Flask, jsonify, request
 
-from Algorithm import time_complexity_visualizer
 from algorithms import ALGORITHMS
-from database import Analysis, SessionLocal, init_db
+from auth import check_credentials, create_token, jwt_required
+from database import init_db, store_analysis
+from validation import ValidationError, parse_analysis_params
+from visualizer import run_analysis
 
 app = Flask(__name__)
-
-SNAPSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
-os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-
 init_db()
 
 
-def _validate_params(algo_name, step, n_max):
-    """Shared validation for the GET and POST /analyze params.
-
-    Returns (algo_name, step, n_max_value, error_response) where
-    error_response is None on success, or a (jsonify(...), 400) tuple to
-    return directly on failure.
-    """
-    if not algo_name:
-        return None, None, None, (jsonify(error="Missing required query parameter: algo"), 400)
-    algo_name = str(algo_name).strip().strip("'\"").lower()
-
-    if algo_name not in ALGORITHMS:
-        return None, None, None, (jsonify(
-            error=f"Unknown algorithm '{algo_name}'",
-            supported_algorithms=sorted(ALGORITHMS.keys()),
-        ), 400)
-
-    if step is None:
-        return None, None, None, (jsonify(error="Missing required query parameter: step"), 400)
-    try:
-        step_value = int(str(step).replace(",", ""))
-    except (TypeError, ValueError):
-        return None, None, None, (jsonify(error="Query parameter 'step' must be a positive integer"), 400)
-    if step_value <= 0:
-        return None, None, None, (jsonify(error="Query parameter 'step' must be a positive integer"), 400)
-
-    if n_max is None:
-        return None, None, None, (jsonify(error="Missing required query parameter: n_max"), 400)
-    try:
-        n_max_value = int(str(n_max).replace(",", ""))
-    except ValueError:
-        return None, None, None, (jsonify(error="Query parameter 'n_max' must be an integer"), 400)
-
-    if n_max_value <= 0:
-        return None, None, None, (jsonify(error="Query parameter 'n_max' must be greater than 0"), 400)
-
-    return algo_name, step_value, n_max_value, None
+@app.errorhandler(ValidationError)
+def handle_validation_error(error):
+    """Any ValidationError raised in an endpoint becomes a 400 JSON response."""
+    return jsonify(error=error.message, **error.extra), 400
 
 
-def _run_analysis(algo_name, step_value, n_max_value):
-    """Runs the visualizer, saves a PNG snapshot, and returns the response dict."""
-    algorithm = ALGORITHMS[algo_name]
-
-    fig, input_sizes, times = time_complexity_visualizer(
-        algorithm, n_min=0, n_max=n_max_value, n_step=step_value, algo_name=algo_name
-    )
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{algo_name}_{timestamp}.png"
-    filepath = os.path.join(SNAPSHOT_DIR, filename)
-    fig.savefig(filepath, format="png")
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png")
-    plt.close(fig)
-    buffer.seek(0)
-    encoded_image = base64.b64encode(buffer.read()).decode("utf-8")
-
-    return {
-        "algo": algo_name,
-        "step": step_value,
-        "n_min": 0,
-        "n_max": n_max_value,
-        "input_sizes": input_sizes,
-        "times": times,
-        "snapshot_path": filepath,
-        "image_base64": encoded_image,
-    }, timestamp
+def _read_json_body():
+    """Return the request's JSON body as a dict ({} if it's missing or not an object)."""
+    body = request.get_json(silent=True)
+    return body if isinstance(body, dict) else {}
 
 
-@app.route("/analyze", methods=["GET"])
-def analyze():
-    algo_name, step_value, n_max_value, error = _validate_params(
-        request.args.get("algo", type=str),
-        request.args.get("step", type=str),
-        request.args.get("n_max", type=str),
-    )
-    if error:
-        return error
-
-    result, _ = _run_analysis(algo_name, step_value, n_max_value)
-    return jsonify(**result)
-
-
-@app.route("/analyze", methods=["POST"])
-def save_analysis():
-    body = request.get_json(silent=True) or {}
-
-    algo_name, step_value, n_max_value, error = _validate_params(
-        body.get("algo"),
-        body.get("step"),
-        body.get("n_max"),
-    )
-    if error:
-        return error
-
-    result, _ = _run_analysis(algo_name, step_value, n_max_value)
-
-    with SessionLocal.begin() as session:
-        analysis = Analysis(**result)
-        session.add(analysis)
-        session.flush()
-        analysis_id = analysis.id
-        created_at = analysis.created_at
-
-    return jsonify(id=analysis_id, created_at=created_at.isoformat(), **result), 201
-
-
-@app.route("/algorithms", methods=["GET"])
+@app.get("/algorithms")
 def list_algorithms():
-    return jsonify(supported_algorithms=sorted(ALGORITHMS.keys()))
+    return jsonify(supported_algorithms=sorted(ALGORITHMS))
+
+
+@app.get("/analyze")
+def analyze():
+    params = parse_analysis_params(
+        request.args.get("algo"),
+        request.args.get("step"),
+        request.args.get("n_max"),
+    )
+    return jsonify(run_analysis(params))
+
+
+@app.post("/login")
+def login():
+    body = _read_json_body()
+    username = body.get("username")
+    if not check_credentials(username, body.get("password")):
+        return jsonify(error="Invalid username or password"), 401
+
+    return jsonify(access_token=create_token(username), token_type="Bearer")
+
+
+@app.post("/analyze")
+@jwt_required
+def save_analysis():
+    body = _read_json_body()
+    params = parse_analysis_params(body.get("algo"), body.get("step"), body.get("n_max"))
+
+    result = run_analysis(params)
+    saved = store_analysis(result)
+
+    return jsonify(id=saved.id, created_at=saved.created_at.isoformat(), **result), 201
 
 
 if __name__ == "__main__":
